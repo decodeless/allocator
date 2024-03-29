@@ -29,7 +29,15 @@ if(MSVC)
 else()
   target_compile_options(${PROJECT_NAME}_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(${PROJECT_NAME}_tests PRIVATE -fbounds-check)
+    target_compile_options(${PROJECT_NAME}_tests PRIVATE
+      $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG>
+      $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG_BACKTRACE>)
+    try_compile(HAS_STDCXX_LIBBACKTRACE
+      SOURCE_FROM_CONTENT stdc++_libbacktrace_test.cpp "int main() { return 0; }"
+      LINK_LIBRARIES stdc++_libbacktrace)
+    if(HAS_STDCXX_LIBBACKTRACE)
+      target_link_libraries(${PROJECT_NAME}_tests $<$<CONFIG:Debug>:stdc++_libbacktrace>)
+    endif()
   endif()
 endif()
 
