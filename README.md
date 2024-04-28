@@ -29,7 +29,49 @@ Note: objects created by the allocator must be trivially destructible because no
 destructor is ever called. This is by design because it is expected objects are
 written to disk.
 
-## Usage
+For allocator type erasure,
+[`decodeless/pmr_allocator.hpp`](include/decodeless/pmr_allocator.hpp)
+implements
+[`std::pmr::memory_resource`](https://en.cppreference.com/w/cpp/memory/memory_resource).
+This allows non-templated code to allocate from different allocator types (e.g.
+via `std::pmr::polymorphic_allocator`) and without including the allocator's
+header. Note that decodeless_allocator requires trivially destructible types but
+`std::pmr::polymorphic_allocator` hides this validation otherwise enforced by
+`decodeless::linear_allocator`.
+
+This library includes utility functions `decodeless::create::object()` and
+`decodeless::create::array()` to construct objects from an allocator or memory
+resource.
+
+## Example
+
+```
+// could also be decodeless::mapped_file_allocator<std::byte> from
+// decodeless_writer
+using parent_allocator = std::allocator<std::byte>;
+decodeless::linear_memory_resource<parent_allocator> memory(1024);
+
+std::span<int> array = decodeless::create::array<int>(memory, {1, 3, 6, 10, 15});
+EXPECT_EQ(array.size(), 5);
+EXPECT_EQ(array[4], 15);
+EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5);
+
+double* alignedDouble = decodeless::create::object(memory, 42.0);
+EXPECT_EQ(*alignedDouble, 42.0);
+EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5 + sizeof(double) + 4);
+```
+
+Using the polymorphic allocator:
+
+```
+decodeless::pmr_linear_memory_resource     res(100);
+std::pmr::polymorphic_allocator<std::byte> alloc(&res); // interface abstraction
+std::span<uint8_t> bytes = decodeless::create::array<uint8_t>(alloc, 10);
+EXPECT_EQ(bytes.size(), 10);
+EXPECT_EQ(res.bytesAllocated(), 10);
+```
+
+## Cmake Integration
 
 This is a header only library with no dependencies other than C++20. A
 convenient and tested way to use the library is with cmake's `FetchContent`:
@@ -38,8 +80,8 @@ convenient and tested way to use the library is with cmake's `FetchContent`:
 include(FetchContent)
 FetchContent_Declare(
     decodeless_allocator
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.14.0
+    GIT_REPOSITORY https://github.com/decodeless/allocator.git
+    GIT_TAG release_tag
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(decodeless_allocator)
@@ -47,24 +89,23 @@ FetchContent_MakeAvailable(decodeless_allocator)
 target_link_libraries(myproject PRIVATE decodeless::allocator)
 ```
 
-## Code Example
+If using in a library, a config file is provided for
+`find_package(decodeless_allocator REQUIRED CONFIG PATHS ...)`, which trivially
+includes CMakeLists.txt. See
+[decodeless_writer](https://github.com/decodeless/writer/blob/main/CMakeLists.txt)
+for an example.
 
-```
-// could also be decodeless::mapped_file_allocator<std::byte> from
-// decodeless_writer
-using parent_allocator = std::allocator<std::byte>;
-decodeless::linear_memory_resource<parent_allocator> memory(1024);
+## `memory_resource` and `allocator`
 
-std::span<int> array =
-    decodeless::createArray<std::initializer_list<int>>(memory, {1, 3, 6, 10, 15});
-EXPECT_EQ(array.size(), 5);
-EXPECT_EQ(array[4], 15);
-EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5);
-
-double* alignedDouble = decodeless::create<double>(memory, 42.0);
-EXPECT_EQ(*alignedDouble, 42.0);
-EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5 + sizeof(double) + 4);
-```
+A memory resource is the object that actually owns the memory being allocated.
+The allocator is a copyable pointer to the memory resource. This separation
+comes directly from consistency with STL allocators. Sometimes the allocator
+indirection is needed and sometimes inlining allocation code in the memory
+resource improves performance, e.g. when chaining allocators. For typical
+`decodeless` use cases, `std::pmr::polymorphic_allocator` is likely preferable.
+For convenience, `decodeless::memory_resource` and `decodeless::allocator` are
+actually C++
+[`concepts`](https://en.cppreference.com/w/cpp/language/constraints).
 
 ## Contributing
 
