@@ -76,10 +76,10 @@ public:
         uintptr_t result = m_next + ((-static_cast<ptrdiff_t>(m_next)) & (align - 1));
 
         // Allocate
-        m_next = result + bytes;
+        uintptr_t newNext = result + bytes;
 
         // Check for overflow and attempt to reallocate if possible
-        if (m_next > m_end) {
+        if (newNext > m_end) {
             if constexpr (realloc_resource_or_allocator<ParentAllocator>) {
                 // Allocate the larger of double the existing arena or enough to
                 // fit what was just requested.
@@ -104,6 +104,10 @@ public:
                 throw std::bad_alloc();
             }
         }
+
+        // Safe to update m_next as no exceptions were thrown.
+        m_next = newNext;
+
         return reinterpret_cast<void*>(result);
     }
 

@@ -208,3 +208,104 @@ TEST(Allocate, References) {
     { [[maybe_unused]] std::span<int> r = create::array(alloc_cr, init); }
     EXPECT_EQ(res.size(), sizeof(int) * 12);
 }
+
+// Test allocation of zero bytes to ensure it handles no-operation requests
+// correctly
+TEST(Allocate, ZeroBytes) {
+    linear_memory_resource<NullAllocator> memory(23);
+    EXPECT_EQ(memory.allocate(0, 1), nullptr);
+    EXPECT_EQ(memory.size(), 0);
+}
+
+// Test allocation that exactly matches the remaining capacity to verify
+// boundary conditions
+TEST(Allocate, ExactCapacity) {
+    linear_memory_resource<NullAllocator> memory(23);
+    EXPECT_EQ(memory.allocate(23, 1), reinterpret_cast<void*>(0));
+    EXPECT_EQ(memory.size(), 23);
+}
+
+// Test repeated allocations that gradually use up the memory to ensure
+// consistent behavior as memory fills
+TEST(Allocate, RepeatedAllocations) {
+    linear_memory_resource<NullAllocator> memory(23);
+    for (size_t i = 0; i < 23; i++) {
+        EXPECT_EQ(memory.allocate(1, 1), reinterpret_cast<void*>(i));
+        EXPECT_EQ(memory.size(), i + 1);
+    }
+}
+
+// Verify behavior when attempting to allocate more memory than available,
+// beyond just expecting std::bad_alloc
+TEST(Allocate, OutOfMemory) {
+    linear_memory_resource<NullAllocator> memory(23);
+    EXPECT_THROW((void)memory.allocate(24, 1), std::bad_alloc);
+    EXPECT_EQ(memory.size(), 0);
+}
+
+// Test the allocator's response to unusual or extreme alignment requirements
+TEST(Allocate, UnusualAlignment) {
+    linear_memory_resource<NullAllocator> memory(23);
+    EXPECT_EQ(memory.allocate(sizeof(int), 16), reinterpret_cast<void*>(0));
+    EXPECT_EQ(memory.size(), sizeof(int));
+}
+
+// Test allocation of a large object to verify handling of large allocations
+TEST(Allocate, LargeAllocation) {
+    linear_memory_resource<NullAllocator> memory(200'000'000);
+    EXPECT_EQ(memory.allocate(123'456'789, 1), reinterpret_cast<void*>(0));
+    EXPECT_EQ(memory.size(), 123'456'789);
+}
+
+// More detailed tests focusing on alignment
+TEST(Allocate, Alignment) {
+    linear_memory_resource<NullAllocator> memory(1024);
+
+    // Test alignment for different types
+    EXPECT_EQ(memory.allocate(sizeof(char), alignof(char)), reinterpret_cast<void*>(0));
+    EXPECT_EQ(memory.size(), sizeof(char));
+
+    // Since char typically has an alignment of 1 and size of 1, the next int (usually 4 bytes
+    // alignment) should start at 4
+    EXPECT_EQ(memory.allocate(sizeof(int), alignof(int)), reinterpret_cast<void*>(4));
+    EXPECT_EQ(memory.size(), 4 + sizeof(int));
+
+    // Double typically requires alignment of 8, so it should start at the next multiple of 8 after
+    // the last int
+    EXPECT_EQ(memory.allocate(sizeof(double), alignof(double)), reinterpret_cast<void*>(8));
+    EXPECT_EQ(memory.size(), 8 + sizeof(double));
+
+    // Long long typically requires alignment of 8 and should follow the double
+    EXPECT_EQ(memory.allocate(sizeof(long long), alignof(long long)), reinterpret_cast<void*>(16));
+    EXPECT_EQ(memory.size(), 16 + sizeof(long long));
+
+    // Test alignment for arrays
+    EXPECT_EQ(memory.allocate(sizeof(char) * 3, alignof(char)), reinterpret_cast<char*>(24));
+    EXPECT_EQ(memory.size(), 24 + sizeof(char) * 3);
+
+    EXPECT_EQ(memory.allocate(sizeof(int) * 2, alignof(int)), reinterpret_cast<int*>(28));
+    EXPECT_EQ(memory.size(), 28 + sizeof(int) * 2);
+
+    EXPECT_EQ(memory.allocate(sizeof(double) * 2, alignof(double)), reinterpret_cast<double*>(40));
+    EXPECT_EQ(memory.size(), 40 + sizeof(double) * 2);
+
+#if defined(_MSC_VER)
+    #pragma warning(push)
+    #pragma warning(disable : 4324) // "structure was padded due to alignment specifier"
+#endif
+
+    // Test alignment for objects with non-standard alignment
+    struct AlignedStruct {
+        int data;
+        alignas(16) int alignedData;
+    };
+
+#if defined(_MSC_VER)
+    #pragma warning(pop)
+#endif
+
+    // AlignedStruct requires alignment of 16, so it should start at the next multiple of 16
+    EXPECT_EQ(memory.allocate(sizeof(AlignedStruct), alignof(AlignedStruct)),
+              reinterpret_cast<void*>(64));
+    EXPECT_EQ(memory.size(), 64 + sizeof(AlignedStruct));
+}
