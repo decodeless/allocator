@@ -2,70 +2,15 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <decodeless/allocator_concepts.hpp>
 #include <memory>
-#include <new>
-#include <span>
-
-#if __has_include(<ranges>)
-    #include <ranges>
-#endif
 
 namespace decodeless {
 
-template <class Resource>
-concept memory_resource = requires(Resource& resource) {
-    {
-        resource.allocate(std::declval<std::size_t>(), std::declval<std::size_t>())
-    } -> std::same_as<void*>;
-    {
-        resource.deallocate(std::declval<void*>(),
-                             std::declval<std::size_t>())
-    } -> std::same_as<void>;
-};
-
-template <class Resource>
-concept realloc_memory_resource = memory_resource<Resource> && requires(Resource& resource) {
-    {
-        resource.reallocate(std::declval<void*>(), std::declval<std::size_t>(),
-                            std::declval<std::size_t>())
-    } -> std::same_as<void*>;
-};
-
-template <class Allocator>
-concept allocator = requires(Allocator& allocator, typename Allocator::value_type) {
-    {
-        allocator.allocate(std::declval<std::size_t>())
-    } -> std::same_as<typename Allocator::value_type*>;
-    {
-        allocator.deallocate(std::declval<typename Allocator::value_type*>(),
-                             std::declval<std::size_t>())
-    } -> std::same_as<void>;
-};
-
-template <class Allocator>
-concept realloc_allocator =
-    allocator<Allocator> && requires(Allocator& allocator, typename Allocator::value_type) {
-        {
-            allocator.reallocate(std::declval<typename Allocator::value_type*>(),
-                                 std::declval<std::size_t>())
-        } -> std::same_as<typename Allocator::value_type*>;
-    };
-
-template <class ResOrAlloc>
-concept memory_resource_or_allocator = (memory_resource<ResOrAlloc> || allocator<ResOrAlloc>);
-
-template <class ResOrAlloc>
-concept realloc_resource_or_allocator =
-    realloc_memory_resource<ResOrAlloc> || realloc_allocator<ResOrAlloc>;
-
-template <class ResOrAlloc>
-concept has_max_size = memory_resource_or_allocator<ResOrAlloc> && requires(ResOrAlloc allocator) {
-    { allocator.max_size() } -> std::same_as<std::size_t>;
-};
-
+// Utility for a linear_memory_resource backed by either a memory
+// resource or an allocator
 template <memory_resource_or_allocator ResOrAlloc>
 std::byte* allocate_bytes(ResOrAlloc& resOrAlloc, size_t bytes) {
     if constexpr (memory_resource<ResOrAlloc>)
@@ -74,6 +19,8 @@ std::byte* allocate_bytes(ResOrAlloc& resOrAlloc, size_t bytes) {
         return resOrAlloc.allocate(bytes);
 }
 
+// Reallocate utility for a linear_memory_resource backed by either a memory
+// resource or an allocator
 template <realloc_resource_or_allocator ResOrAlloc>
 std::byte* reallocate_bytes(ResOrAlloc& resOrAlloc, std::byte* original, size_t size) {
     if constexpr (memory_resource<ResOrAlloc>)
@@ -82,9 +29,6 @@ std::byte* reallocate_bytes(ResOrAlloc& resOrAlloc, std::byte* original, size_t 
     else
         return resOrAlloc.reallocate(original, size);
 }
-
-template <typename T>
-concept trivially_destructible = std::is_trivially_destructible_v<T>;
 
 // A possibly-growable local linear arena allocator.
 // - growable: The backing allocation may grow if it has reallocate() and the
@@ -95,9 +39,8 @@ concept trivially_destructible = std::is_trivially_destructible_v<T>;
 //   objects should be created from this.
 // - arena: Allocations come from a single blob/pool and when it is exhausted
 //   std::bad_alloc is thrown (unless a reallocate() is possible).
-// Backed by either a STL style allocator (typically just a pointer) or a
-// concrete memory resource, although both need a reallocate() and max_size()
-// call to enable growing.
+// Backed by either a STL style allocator or a concrete memory resource,
+// although both need a reallocate() and max_size() call to enable growing.
 // NOTE: currently expects std::byte allocators - use rebind_alloc from
 // std::allocator_traits if needed
 template <memory_resource_or_allocator ParentAllocator = std::allocator<std::byte>>
@@ -107,24 +50,24 @@ public:
     using parent_allocator = ParentAllocator;
 
     linear_memory_resource(size_t                 initialSize = INITIAL_SIZE,
-                           const ParentAllocator& parentAllocator = ParentAllocator())
+                           const ParentAllocator& parent = ParentAllocator())
         requires allocator<ParentAllocator>
-        : m_parentAllocator(parentAllocator)
-        , m_begin(allocate_bytes<ParentAllocator>(m_parentAllocator, initialSize))
+        : m_parent(parent)
+        , m_begin(allocate_bytes<ParentAllocator>(m_parent, initialSize))
         , m_next(reinterpret_cast<uintptr_t>(m_begin))
         , m_end(reinterpret_cast<uintptr_t>(m_begin) + initialSize) {}
 
-    linear_memory_resource(size_t initialSize, ParentAllocator&& parentAllocator)
+    linear_memory_resource(size_t initialSize, ParentAllocator&& parent)
         requires memory_resource<ParentAllocator>
-        : m_parentAllocator(std::move(parentAllocator))
-        , m_begin(allocate_bytes(m_parentAllocator, initialSize))
+        : m_parent(std::move(parent))
+        , m_begin(allocate_bytes(m_parent, initialSize))
         , m_next(reinterpret_cast<uintptr_t>(m_begin))
         , m_end(reinterpret_cast<uintptr_t>(m_begin) + initialSize) {}
 
     linear_memory_resource() = delete;
     linear_memory_resource(const linear_memory_resource& other) = delete;
     linear_memory_resource(linear_memory_resource&& other) noexcept = default;
-    ~linear_memory_resource() { m_parentAllocator.deallocate(m_begin, bytesAllocated()); }
+    ~linear_memory_resource() { m_parent.deallocate(m_begin, capacity()); }
     linear_memory_resource& operator=(const linear_memory_resource& other) = delete;
     linear_memory_resource& operator=(linear_memory_resource&& other) noexcept = default;
 
@@ -140,22 +83,23 @@ public:
             if constexpr (realloc_resource_or_allocator<ParentAllocator>) {
                 // Allocate the larger of double the existing arena or enough to
                 // fit what was just requested.
-                size_t newSize = std::max(bytesAllocated(), 2 * bytesReserved());
+                size_t newSize = std::max(size(), 2 * capacity());
 
                 // If double the reservation would overflow the backing
                 // allocator, allocate exactly the maximum.
                 if constexpr (has_max_size<ParentAllocator>) {
-                    if (newSize > m_parentAllocator.max_size() &&
-                        bytesAllocated() < m_parentAllocator.max_size()) {
-                        newSize = m_parentAllocator.max_size();
+                    if (newSize > m_parent.max_size() && size() < m_parent.max_size()) {
+                        newSize = m_parent.max_size();
                     }
                 }
 
                 // Verify the reallocation produced the same address.
-                std::byte* addr = reallocate_bytes(m_parentAllocator, m_begin, newSize);
+                std::byte* addr = reallocate_bytes(m_parent, m_begin, newSize);
                 if (addr != m_begin) {
                     throw std::bad_alloc();
                 }
+
+                m_end = reinterpret_cast<uintptr_t>(m_begin) + newSize;
             } else {
                 throw std::bad_alloc();
             }
@@ -163,30 +107,48 @@ public:
         return reinterpret_cast<void*>(result);
     }
 
+    // Deallocates memory. This operation is a no-op for linear_memory_resource
+    // as individual deallocations are not supported.
     constexpr void deallocate(void* p, std::size_t bytes) {
         // Do nothing
         (void)p;
         (void)bytes;
     }
 
-    size_t bytesAllocated() const { return m_next - reinterpret_cast<uintptr_t>(m_begin); }
-    size_t bytesReserved() const { return m_end - reinterpret_cast<uintptr_t>(m_begin); }
-    void   reset() { m_next = reinterpret_cast<uintptr_t>(m_begin); }
+    // Clear all allocations to begin allocating from scratch, invalidating all
+    // previously allocated memory.
+    void reset() { m_next = reinterpret_cast<uintptr_t>(m_begin); }
+
+    // Reallocate the parent allocation to exactly the size of all current
+    // allocations.
+    void truncate()
+        requires realloc_resource_or_allocator<ParentAllocator>
+    {
+        std::byte* addr = reallocate_bytes(m_parent, m_begin, size());
+        if (addr != m_begin) {
+            throw std::bad_alloc();
+        }
+        m_end = m_next;
+    }
 
     // Returns a pointer to the arena/parent allocation.
-    void* arena() const { return reinterpret_cast<void*>(m_begin); }
+    void* data() const { return reinterpret_cast<void*>(m_begin); }
 
-protected:
-    ParentAllocator m_parentAllocator;
+    // Returns the total number of bytes allocated within the arena
+    size_t size() const { return m_next - reinterpret_cast<uintptr_t>(m_begin); }
+
+    // Returns the size of the arena/parent allocation
+    size_t capacity() const { return m_end - reinterpret_cast<uintptr_t>(m_begin); }
 
 private:
+    ParentAllocator m_parent;
     std::byte*      m_begin;
     uintptr_t       m_next;
     uintptr_t       m_end;
 };
 
-// Workaround copyable STL allocators by passing around a pointer/reference to
-// the object with state.
+// Stateful STL-compatible allocator adaptor that holds a pointer to the
+// concrete memory resource
 template <trivially_destructible T, memory_resource MemoryResource>
 class memory_resource_ref {
 public:
@@ -209,6 +171,14 @@ public:
         return m_resource->deallocate(static_cast<void*>(p), n);
     }
 
+    bool operator==(const memory_resource_ref& other) const {
+        return m_resource == other.m_resource;
+    }
+
+    bool operator!=(const memory_resource_ref& other) const {
+        return m_resource != other.m_resource;
+    }
+
     resource_type& resource() const { return *m_resource; }
 
     // Needed by msvc
@@ -221,113 +191,10 @@ protected:
     resource_type* m_resource;
 };
 
-// STL compatible allocator with an implicit constructor from
-// linear_memory_resource. Emphasizes why std::pmr is a thing - ParentAllocator
-// shouldn't affect the type.
+// STL compatible allocator with an implicit linear_memory_resource memory
+// resource. The need for this emphasizes why std::pmr is a thing - the
+// MemoryResource would ideally not affect the type.
 template <trivially_destructible T, memory_resource MemoryResource = linear_memory_resource<>>
 using linear_allocator = memory_resource_ref<T, MemoryResource>;
-
-namespace create {
-
-// Utility calls to construct objects from a decodeless memory resource
-namespace from_resource {
-
-template <trivially_destructible T, memory_resource MemoryResource>
-T* object(MemoryResource& memoryResource, const T& init) {
-    return std::construct_at<T>(linear_allocator<T, MemoryResource>(memoryResource).allocate(1),
-                                init);
-};
-
-template <trivially_destructible T, memory_resource MemoryResource, class... Args>
-T* object(MemoryResource& memoryResource, Args&&... args) {
-    return std::construct_at<T>(linear_allocator<T, MemoryResource>(memoryResource).allocate(1),
-                                std::forward<Args>(args)...);
-};
-
-template <trivially_destructible T, memory_resource MemoryResource>
-std::span<T> array(MemoryResource& memoryResource, size_t size) {
-    auto result =
-        std::span(linear_allocator<T, MemoryResource>(memoryResource).allocate(size), size);
-    for (auto& obj : result)
-        std::construct_at<T>(&obj);
-    return result;
-};
-
-#ifdef __cpp_lib_ranges
-template <trivially_destructible T, std::ranges::input_range Range = std::initializer_list<T>,
-          memory_resource MemoryResource>
-    requires std::convertible_to<std::ranges::range_value_t<Range>, T>
-std::span<T> array(MemoryResource& memoryResource, Range&& range) {
-    auto size = std::ranges::size(range);
-    auto result =
-        std::span(linear_allocator<T, MemoryResource>(memoryResource).allocate(size), size);
-    auto out = result.begin();
-    for (auto& in : range)
-        std::construct_at<T>(&*out++, in);
-    return result;
-};
-
-// Overload to deduce T from the Range type. Convenient but not always desired
-template <std::ranges::input_range Range, memory_resource MemoryResource>
-auto array(MemoryResource& memoryResource, Range&& range) {
-    return array<std::ranges::range_value_t<Range>, Range, MemoryResource>(
-        memoryResource, std::forward<Range>(range));
-}
-#endif
-
-} // namespace from_resource
-
-// Utility calls to construct objects from an STL compatible allocator
-namespace from_allocator {
-
-template <trivially_destructible T, allocator Allocator>
-using allocator_rebind_t = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
-
-template <trivially_destructible T, allocator Allocator>
-T* object(const Allocator& allocator, const T& init) {
-    return std::construct_at<T>(allocator_rebind_t<T, Allocator>(allocator).allocate(1), init);
-};
-
-template <trivially_destructible T, allocator Allocator, class... Args>
-T* object(const Allocator& allocator, Args&&... args) {
-    return std::construct_at<T>(allocator_rebind_t<T, Allocator>(allocator).allocate(1),
-                                std::forward<Args>(args)...);
-};
-
-template <trivially_destructible T, allocator Allocator>
-std::span<T> array(const Allocator& allocator, size_t size) {
-    auto result = std::span(allocator_rebind_t<T, Allocator>(allocator).allocate(size), size);
-    for (auto& obj : result)
-        std::construct_at<T>(&obj);
-    return result;
-};
-
-#ifdef __cpp_lib_ranges
-template <trivially_destructible T, std::ranges::input_range Range = std::initializer_list<T>,
-          allocator Allocator>
-    requires std::convertible_to<std::ranges::range_value_t<Range>, T>
-std::span<T> array(const Allocator& allocator, Range&& range) {
-    auto size = std::ranges::size(range);
-    auto result = std::span(allocator_rebind_t<T, Allocator>(allocator).allocate(size), size);
-    auto out = result.begin();
-    for (auto& in : range)
-        std::construct_at<T>(&*out++, in);
-    return result;
-};
-
-// Overload to deduce T from the Range type. Convenient but not always desired
-template <std::ranges::input_range Range, allocator Allocator>
-auto array(const Allocator& allocator, Range&& range) {
-    return array<std::ranges::range_value_t<Range>, Range, Allocator>(allocator,
-                                                                      std::forward<Range>(range));
-}
-#endif
-
-} // namespace from_allocator
-
-using namespace from_resource;
-using namespace from_allocator;
-
-} // namespace create
 
 } // namespace decodeless

@@ -54,11 +54,11 @@ decodeless::linear_memory_resource<parent_allocator> memory(1024);
 std::span<int> array = decodeless::create::array<int>(memory, {1, 3, 6, 10, 15});
 EXPECT_EQ(array.size(), 5);
 EXPECT_EQ(array[4], 15);
-EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5);
+EXPECT_EQ(memory.size(), sizeof(int) * 5);
 
 double* alignedDouble = decodeless::create::object(memory, 42.0);
 EXPECT_EQ(*alignedDouble, 42.0);
-EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5 + sizeof(double) + 4);
+EXPECT_EQ(memory.size(), sizeof(int) * 5 + sizeof(double) + 4);
 ```
 
 Using the polymorphic allocator:
@@ -68,8 +68,12 @@ decodeless::pmr_linear_memory_resource     res(100);
 std::pmr::polymorphic_allocator<std::byte> alloc(&res); // interface abstraction
 std::span<uint8_t> bytes = decodeless::create::array<uint8_t>(alloc, 10);
 EXPECT_EQ(bytes.size(), 10);
-EXPECT_EQ(res.bytesAllocated(), 10);
+EXPECT_EQ(res.size(), 10);
 ```
+
+## Dependencies
+
+None. Just needs C++20.
 
 ## Cmake Integration
 

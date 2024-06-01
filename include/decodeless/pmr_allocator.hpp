@@ -43,10 +43,11 @@ public:
         requires memory_resource<ParentAllocator>
         : memory_resource_adapter<linear_memory_resource<ParentAllocator>>(
               initialSize, std::move(parentAllocator)) {}
-    size_t bytesAllocated() const { return this->backing_resource().bytesAllocated(); }
-    size_t bytesReserved() const { return this->backing_resource().bytesReserved(); }
     void   reset() { this->backing_resource().reset(); }
-    void*  arena() const { return this->backing_resource().arena(); }
+    void   truncate() { this->backing_resource().truncate(); }
+    void*  data() const { return this->backing_resource().data(); }
+    size_t size() const { return this->backing_resource().size(); }
+    size_t capacity() const { return this->backing_resource().capacity(); }
 };
 
 } // namespace decodeless
