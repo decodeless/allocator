@@ -1,10 +1,12 @@
 // Copyright (c) 2024 Pyarelal Knowles, MIT License
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <decodeless/allocator.hpp>
+#include <decodeless/allocator_construction.hpp>
 #include <decodeless/pmr_allocator.hpp>
 #include <gtest/gtest.h>
 #include <initializer_list>
@@ -32,20 +34,20 @@ TEST(Allocate, Object) {
 
     // byte can be placed anywhere
     EXPECT_EQ(memory.allocate(sizeof(char), alignof(char)), reinterpret_cast<void*>(0));
-    EXPECT_EQ(memory.bytesAllocated(), 1);
+    EXPECT_EQ(memory.size(), 1);
 
     // int after the byte must have 3 bytes padding, placed at 4 and taking 4
     EXPECT_EQ(memory.allocate(sizeof(int), alignof(int)), reinterpret_cast<void*>(4));
-    EXPECT_EQ(memory.bytesAllocated(), 8);
+    EXPECT_EQ(memory.size(), 8);
 
     // double after int must have 4 bytes padding, placed at 8, taking 8 more
     EXPECT_EQ(memory.allocate(sizeof(double), alignof(double)), reinterpret_cast<void*>(8));
-    EXPECT_EQ(memory.bytesAllocated(), 16);
+    EXPECT_EQ(memory.size(), 16);
 
     // another byte to force some padding, together with another int won't fit
-    EXPECT_EQ(memory.bytesReserved() - memory.bytesAllocated(), 7);
+    EXPECT_EQ(memory.capacity() - memory.size(), 7);
     EXPECT_EQ(memory.allocate(sizeof(char), alignof(char)), reinterpret_cast<void*>(16));
-    EXPECT_EQ(memory.bytesReserved() - memory.bytesAllocated(),
+    EXPECT_EQ(memory.capacity() - memory.size(),
               6); // plenty left for an int, but not aligned
     EXPECT_THROW((void)memory.allocate(sizeof(int), alignof(int)), std::bad_alloc);
 }
@@ -55,15 +57,15 @@ TEST(Allocate, Array) {
 
     // byte can be placed anywhere
     EXPECT_EQ(memory.allocate(sizeof(char) * 3, alignof(char)), reinterpret_cast<char*>(0));
-    EXPECT_EQ(memory.bytesAllocated(), 3);
+    EXPECT_EQ(memory.size(), 3);
 
     // 2 ints after the 3rd byte must have 3 bytes padding, placed at 4 and taking 8
     EXPECT_EQ(memory.allocate(sizeof(int) * 2, alignof(int)), reinterpret_cast<int*>(4));
-    EXPECT_EQ(memory.bytesAllocated(), 12);
+    EXPECT_EQ(memory.size(), 12);
 
     // 2 doubles after 12 bytes must have 4 bytes padding, placed at 16, taking 16 more
     EXPECT_EQ(memory.allocate(sizeof(double) * 2, alignof(double)), reinterpret_cast<double*>(16));
-    EXPECT_EQ(memory.bytesAllocated(), 32);
+    EXPECT_EQ(memory.size(), 32);
 }
 
 TEST(Allocate, Initialize) {
@@ -97,13 +99,13 @@ TEST(Allocate, Initialize) {
 // Relaxed test case for MSVC where the debug vector allocates extra crap
 TEST(Allocate, VectorRelaxed) {
     linear_memory_resource alloc(100);
-    EXPECT_EQ(alloc.bytesAllocated(), 0);
-    EXPECT_EQ(alloc.bytesReserved(), 100);
+    EXPECT_EQ(alloc.size(), 0);
+    EXPECT_EQ(alloc.capacity(), 100);
     std::vector<uint8_t, linear_allocator<uint8_t>> vec(10, alloc);
-    EXPECT_GE(alloc.bytesAllocated(), 10);
-    auto allocated = alloc.bytesAllocated();
+    EXPECT_GE(alloc.size(), 10);
+    auto allocated = alloc.size();
     vec.reserve(20);
-    EXPECT_GT(alloc.bytesAllocated(), allocated);
+    EXPECT_GT(alloc.size(), allocated);
     EXPECT_THROW(vec.reserve(100), std::bad_alloc);
 }
 
@@ -125,37 +127,37 @@ TEST(Allocate, Vector) {
     }
 
     linear_memory_resource alloc(30);
-    EXPECT_EQ(alloc.bytesAllocated(), 0);
-    EXPECT_EQ(alloc.bytesReserved(), 30);
+    EXPECT_EQ(alloc.size(), 0);
+    EXPECT_EQ(alloc.capacity(), 30);
 
     // Yes, this is possible but don't do it. std::vector can easily reallocate
     // which will leave unused holes in the linear allocator.
     std::vector<uint8_t, linear_allocator<uint8_t>> vec(10, alloc);
-    EXPECT_EQ(alloc.bytesAllocated(), 10);
+    EXPECT_EQ(alloc.size(), 10);
     vec.reserve(20);
-    EXPECT_EQ(alloc.bytesAllocated(), 30);
+    EXPECT_EQ(alloc.size(), 30);
     EXPECT_THROW(vec.reserve(21), std::bad_alloc);
 }
 
 TEST(Allocate, PmrAllocator) {
     pmr_linear_memory_resource<std::allocator<std::byte>> res(100);
-    EXPECT_EQ(res.bytesAllocated(), 0);
-    EXPECT_EQ(res.bytesReserved(), 100);
+    EXPECT_EQ(res.size(), 0);
+    EXPECT_EQ(res.capacity(), 100);
     std::pmr::polymorphic_allocator<std::byte> alloc(&res);
     std::span<uint8_t>                         bytes = create::array<uint8_t>(alloc, 10);
     EXPECT_EQ(bytes.size(), 10);
-    EXPECT_EQ(res.bytesAllocated(), 10);
+    EXPECT_EQ(res.size(), 10);
 }
 
 TEST(Allocate, PmrVectorRelaxed) {
     pmr_linear_memory_resource<std::allocator<std::byte>> res(100);
-    EXPECT_EQ(res.bytesAllocated(), 0);
-    EXPECT_EQ(res.bytesReserved(), 100);
+    EXPECT_EQ(res.size(), 0);
+    EXPECT_EQ(res.capacity(), 100);
     std::pmr::vector<uint8_t> vec(10, &res);
-    EXPECT_GE(res.bytesAllocated(), 10);
-    auto allocated = res.bytesAllocated();
+    EXPECT_GE(res.size(), 10);
+    auto allocated = res.size();
     vec.reserve(20);
-    EXPECT_GT(res.bytesAllocated(), allocated);
+    EXPECT_GT(res.size(), allocated);
     EXPECT_THROW(vec.reserve(100), std::bad_alloc);
 }
 
@@ -168,17 +170,17 @@ TEST(Allocate, Readme) {
     std::span<int> array = decodeless::create::array<int>(memory, {(int)1, 3, 6, 10, 15});
     EXPECT_EQ(array.size(), 5);
     EXPECT_EQ(array[4], 15);
-    EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5);
+    EXPECT_EQ(memory.size(), sizeof(int) * 5);
 
     double* alignedDouble = decodeless::create::object(memory, 42.0);
     EXPECT_EQ(*alignedDouble, 42.0);
-    EXPECT_EQ(memory.bytesAllocated(), sizeof(int) * 5 + sizeof(double) + 4);
+    EXPECT_EQ(memory.size(), sizeof(int) * 5 + sizeof(double) + 4);
 
     decodeless::pmr_linear_memory_resource     res(100);
     std::pmr::polymorphic_allocator<std::byte> alloc(&res); // interface abstraction
     std::span<uint8_t> bytes = decodeless::create::array<uint8_t>(alloc, 10);
     EXPECT_EQ(bytes.size(), 10);
-    EXPECT_EQ(res.bytesAllocated(), 10);
+    EXPECT_EQ(res.size(), 10);
 }
 
 TEST(Allocate, References) {
@@ -195,7 +197,7 @@ TEST(Allocate, References) {
     { [[maybe_unused]] std::span<int> r = create::array<int>(alloc_c, 1); }
     { [[maybe_unused]] std::span<int> r = create::array<int>(alloc_r, 1); }
     { [[maybe_unused]] std::span<int> r = create::array<int>(alloc_cr, 1); }
-    EXPECT_EQ(res.bytesAllocated(), sizeof(int) * 6);
+    EXPECT_EQ(res.size(), sizeof(int) * 6);
 
     std::vector init{42};
     { [[maybe_unused]] std::span<int> r = create::array(res, init); }
@@ -204,5 +206,5 @@ TEST(Allocate, References) {
     { [[maybe_unused]] std::span<int> r = create::array(alloc_c, init); }
     { [[maybe_unused]] std::span<int> r = create::array(alloc_r, init); }
     { [[maybe_unused]] std::span<int> r = create::array(alloc_cr, init); }
-    EXPECT_EQ(res.bytesAllocated(), sizeof(int) * 12);
+    EXPECT_EQ(res.size(), sizeof(int) * 12);
 }
