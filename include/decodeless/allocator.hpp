@@ -137,13 +137,16 @@ public:
     }
 
     // Returns a pointer to the arena/parent allocation.
-    void* data() const { return reinterpret_cast<void*>(m_begin); }
+    [[nodiscard]] void* data() const { return reinterpret_cast<void*>(m_begin); }
 
     // Returns the total number of bytes allocated within the arena
-    size_t size() const { return m_next - reinterpret_cast<uintptr_t>(m_begin); }
+    [[nodiscard]] size_t size() const { return m_next - reinterpret_cast<uintptr_t>(m_begin); }
 
     // Returns the size of the arena/parent allocation
-    size_t capacity() const { return m_end - reinterpret_cast<uintptr_t>(m_begin); }
+    [[nodiscard]] size_t capacity() const { return m_end - reinterpret_cast<uintptr_t>(m_begin); }
+
+    // Provide public access to parent allocator. Primarily used for testing.
+    [[nodiscard]] ParentAllocator& parent() { return m_parent; }
 
 private:
     ParentAllocator m_parent;
@@ -176,15 +179,30 @@ public:
         return m_resource->deallocate(static_cast<void*>(p), n);
     }
 
-    bool operator==(const memory_resource_ref& other) const {
+    [[nodiscard]] constexpr T* reallocate(T* ptr, std::size_t bytes)
+        requires realloc_memory_resource<MemoryResource>
+    {
+        return static_cast<T*>(m_resource->reallocate(ptr, bytes));
+    }
+
+    [[nodiscard]] constexpr size_t max_size() const
+        requires has_max_size<MemoryResource>
+    {
+        return m_resource->max_size();
+    }
+
+    template <trivially_destructible U>
+    [[nodiscard]] bool operator==(const memory_resource_ref<U, MemoryResource>& other) const {
         return m_resource == other.m_resource;
     }
 
-    bool operator!=(const memory_resource_ref& other) const {
+    template <trivially_destructible U>
+    [[nodiscard]] bool operator!=(const memory_resource_ref<U, MemoryResource>& other) const {
         return m_resource != other.m_resource;
     }
 
-    resource_type& resource() const { return *m_resource; }
+    // Public access required for rebind
+    [[nodiscard]] resource_type& resource() const { return *m_resource; }
 
     // Needed by msvc
     template <class U>
@@ -192,14 +210,15 @@ public:
         using other = memory_resource_ref<U, MemoryResource>;
     };
 
-protected:
+private:
     resource_type* m_resource;
 };
 
 // STL compatible allocator with an implicit linear_memory_resource memory
 // resource. The need for this emphasizes why std::pmr is a thing - the
 // MemoryResource would ideally not affect the type.
-template <trivially_destructible T, memory_resource MemoryResource = linear_memory_resource<>>
-using linear_allocator = memory_resource_ref<T, MemoryResource>;
+template <trivially_destructible       T,
+          memory_resource_or_allocator ParentAllocator = std::allocator<std::byte>>
+using linear_allocator = memory_resource_ref<T, linear_memory_resource<ParentAllocator>>;
 
 } // namespace decodeless
