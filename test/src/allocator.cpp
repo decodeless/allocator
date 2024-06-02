@@ -29,6 +29,43 @@ struct NullAllocator {
     bool allocated = false;
 };
 
+struct ReallocNullAllocator {
+    using value_type = std::byte;
+    value_type* allocate(std::size_t n) {
+        EXPECT_EQ(size, 0);
+        size = n;
+        return nullptr;
+    }
+    value_type* reallocate(value_type* p, std::size_t n) noexcept {
+        EXPECT_EQ(p, nullptr);
+        EXPECT_GT(size, 0);
+        size = n;
+        return nullptr;
+    }
+    void deallocate(value_type* p, std::size_t n) noexcept {
+        EXPECT_GT(size, 0);
+        (void)p;
+        (void)n;
+    }
+    size_t size = 0;
+};
+
+static_assert(realloc_allocator<ReallocNullAllocator>);
+
+struct ReallocNullMemoryResource {
+    void* allocate(std::size_t, std::size_t) { return nullptr; }
+    void* reallocate(void*, std::size_t, std::size_t) noexcept { return nullptr; }
+    void  deallocate(void*, std::size_t) noexcept {}
+};
+
+static_assert(realloc_memory_resource<ReallocNullMemoryResource>);
+static_assert(realloc_allocator<memory_resource_ref<std::byte, ReallocNullMemoryResource>>,
+              "linear_allocator should enable reallocate when possible");
+static_assert(!realloc_allocator<linear_allocator<std::byte, std::allocator<std::byte>>>,
+              "std::allocator does not reallocate");
+static_assert(!realloc_memory_resource<linear_memory_resource<ReallocNullAllocator>>,
+              "linear memory does not reallocate, only its parent");
+
 TEST(Allocate, Object) {
     linear_memory_resource<NullAllocator> memory(23);
 
@@ -94,6 +131,44 @@ TEST(Allocate, Initialize) {
     EXPECT_EQ(span3[0], 3);
     EXPECT_EQ(span3[1], 4);
     EXPECT_EQ(span3[2], 5);
+}
+
+TEST(Allocate, Realloc) {
+    linear_memory_resource<ReallocNullAllocator> alloc(4);
+    EXPECT_EQ(alloc.parent().size, 4);
+    (void)alloc.allocate(sizeof(int), alignof(int));
+    EXPECT_EQ(alloc.parent().size, 1 * sizeof(int));
+    (void)alloc.allocate(sizeof(int), alignof(int));
+    EXPECT_EQ(alloc.parent().size, 2 * sizeof(int));
+
+    // Allocate exact size for allocations exceeding double capacity
+    (void)alloc.allocate(sizeof(int) * 1000, alignof(int));
+    EXPECT_EQ(alloc.parent().size, 1002 * sizeof(int));
+
+    // Doubling of capacity for allocations under double existing capacity
+    (void)alloc.allocate(sizeof(int), alignof(int));
+    EXPECT_EQ(alloc.parent().size, 2004 * sizeof(int));
+
+    // Truncate should truncate the parent allocator
+    alloc.truncate();
+    EXPECT_EQ(alloc.parent().size, 1003 * sizeof(int));
+}
+
+TEST(Allocate, Equality) {
+    linear_memory_resource<NullAllocator>             r0(4);
+    linear_memory_resource<NullAllocator>             r1(4);
+    linear_memory_resource<std::allocator<std::byte>> r2(4);
+    linear_allocator<int, NullAllocator>              a0(r0);
+    linear_allocator<int, NullAllocator>              a1(r1);
+    linear_allocator<int, std::allocator<std::byte>>  a2(r2);
+    linear_allocator<int, NullAllocator>              c0(a0);
+    linear_allocator<int, NullAllocator>              c1(a1);
+    linear_allocator<int, std::allocator<std::byte>>  c2(a2);
+    EXPECT_EQ(a0, c0);
+    EXPECT_EQ(a1, c1);
+    EXPECT_EQ(a2, c2);
+    EXPECT_NE(a0, c1);
+    EXPECT_NE(a1, c0);
 }
 
 // Relaxed test case for MSVC where the debug vector allocates extra crap
