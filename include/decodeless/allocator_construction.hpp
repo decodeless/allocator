@@ -19,6 +19,7 @@ namespace from_resource {
 // Copy constructs an object with implicit type deduction.
 template <trivially_destructible T, memory_resource MemoryResource>
 T* object(MemoryResource& memoryResource, const T& init) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     return std::construct_at<T>(
         reinterpret_cast<T*>(memoryResource.allocate(sizeof(T), alignof(T))), init);
 };
@@ -26,6 +27,7 @@ T* object(MemoryResource& memoryResource, const T& init) {
 // Construct an explicitly typed object with any arguments.
 template <trivially_destructible T, memory_resource MemoryResource, class... Args>
 T* object(MemoryResource& memoryResource, Args&&... args) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     return std::construct_at<T>(
         reinterpret_cast<T*>(memoryResource.allocate(sizeof(T), alignof(T))),
         std::forward<Args>(args)...);
@@ -34,6 +36,7 @@ T* object(MemoryResource& memoryResource, Args&&... args) {
 // Default construct an array of 'size' objects.
 template <trivially_destructible T, memory_resource MemoryResource>
 std::span<T> array(MemoryResource& memoryResource, size_t size) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     auto result = std::span(
         reinterpret_cast<T*>(memoryResource.allocate(sizeof(T) * size, alignof(T))), size);
     for (auto& obj : result)
@@ -47,6 +50,7 @@ template <trivially_destructible T, std::ranges::input_range Range = std::initia
           memory_resource MemoryResource>
     requires std::convertible_to<std::ranges::range_value_t<Range>, T>
 std::span<T> array(MemoryResource& memoryResource, Range&& range) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     auto size = std::ranges::size(range);
     auto result = std::span(
         reinterpret_cast<T*>(memoryResource.allocate(sizeof(T) * size, alignof(T))), size);
@@ -76,12 +80,14 @@ using allocator_rebind_t = typename std::allocator_traits<Allocator>::template r
 // Copy constructs an object with implicit type deduction.
 template <trivially_destructible T, allocator Allocator>
 T* object(const Allocator& allocator, const T& init) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     return std::construct_at<T>(allocator_rebind_t<T, Allocator>(allocator).allocate(1), init);
 };
 
 // Construct an explicitly typed object with any arguments.
 template <trivially_destructible T, allocator Allocator, class... Args>
 T* object(const Allocator& allocator, Args&&... args) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     return std::construct_at<T>(allocator_rebind_t<T, Allocator>(allocator).allocate(1),
                                 std::forward<Args>(args)...);
 };
@@ -89,6 +95,7 @@ T* object(const Allocator& allocator, Args&&... args) {
 // Default construct an array of 'size' objects.
 template <trivially_destructible T, allocator Allocator>
 std::span<T> array(const Allocator& allocator, size_t size) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     auto result = std::span(allocator_rebind_t<T, Allocator>(allocator).allocate(size), size);
     for (auto& obj : result)
         std::construct_at<T>(&obj);
@@ -101,6 +108,7 @@ template <trivially_destructible T, std::ranges::input_range Range = std::initia
           allocator Allocator>
     requires std::convertible_to<std::ranges::range_value_t<Range>, T>
 std::span<T> array(const Allocator& allocator, Range&& range) {
+    static_assert(!std::is_const_v<T>, "const construction not allowed. cast instead");
     auto size = std::ranges::size(range);
     auto result = std::span(allocator_rebind_t<T, Allocator>(allocator).allocate(size), size);
     auto out = result.begin();

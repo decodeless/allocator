@@ -384,3 +384,32 @@ TEST(Allocate, Alignment) {
               reinterpret_cast<void*>(64));
     EXPECT_EQ(memory.size(), 64 + sizeof(AlignedStruct));
 }
+
+struct int2 {
+    int2() = default;
+    int2(int x_, int y_)
+        : x(x_)
+        , y(y_) {}
+    bool operator==(const int2& other) const { return x == other.x && y == other.y; }
+    int  x = 123;
+    int  y = 123;
+};
+
+TEST(Construct, MemoryResource) {
+    linear_memory_resource<std::allocator<std::byte>> memory(10000);
+    EXPECT_EQ(*decodeless::create::object<int>(memory), 0);
+    EXPECT_EQ(*decodeless::create::object<int>(memory, 42), 42);
+    EXPECT_EQ(*decodeless::create::object<int2>(memory), int2(123, 123));
+    EXPECT_EQ(*decodeless::create::object<int2>(memory, 42, 42), int2(42, 42));
+    EXPECT_EQ(*decodeless::create::object<int2>(memory, int2(42, 42)), int2(42, 42));
+}
+
+TEST(Construct, Allocator) {
+    linear_memory_resource<std::allocator<std::byte>>      memory(10000);
+    linear_allocator<std::byte, std::allocator<std::byte>> allocator(memory);
+    EXPECT_EQ(*decodeless::create::object<int>(allocator), 0);
+    EXPECT_EQ(*decodeless::create::object<int>(allocator, 42), 42);
+    EXPECT_EQ(*decodeless::create::object<int2>(allocator), int2(123, 123));
+    EXPECT_EQ(*decodeless::create::object<int2>(allocator, 42, 42), int2(42, 42));
+    EXPECT_EQ(*decodeless::create::object<int2>(allocator, int2(42, 42)), int2(42, 42));
+}
