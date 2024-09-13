@@ -55,7 +55,7 @@ std::span<T> array(MemoryResource& memoryResource, Range&& range) {
     auto result = std::span(
         reinterpret_cast<T*>(memoryResource.allocate(sizeof(T) * size, alignof(T))), size);
     auto out = result.begin();
-    for (auto& in : range)
+    for (const auto& in : range)
         std::construct_at<T>(&*out++, in);
     return result;
 };
@@ -112,7 +112,7 @@ std::span<T> array(const Allocator& allocator, Range&& range) {
     auto size = std::ranges::size(range);
     auto result = std::span(allocator_rebind_t<T, Allocator>(allocator).allocate(size), size);
     auto out = result.begin();
-    for (auto& in : range)
+    for (const auto& in : range)
         std::construct_at<T>(&*out++, in);
     return result;
 };

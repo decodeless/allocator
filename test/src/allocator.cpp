@@ -8,8 +8,10 @@
 #include <decodeless/allocator.hpp>
 #include <decodeless/allocator_construction.hpp>
 #include <decodeless/pmr_allocator.hpp>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <initializer_list>
+#include <utility>
 
 using namespace decodeless;
 
@@ -234,6 +236,15 @@ TEST(Allocate, PmrVectorRelaxed) {
     vec.reserve(20);
     EXPECT_GT(res.size(), allocated);
     EXPECT_THROW(vec.reserve(100), std::bad_alloc);
+}
+
+TEST(Allocate, ArrayFromView) {
+    using namespace std::views;
+    auto                   running_sum = [l = 0](int i) mutable { return std::exchange(l, l + i); };
+    std::vector            ints{1, 2, 3, 4, 5};
+    linear_memory_resource alloc(100);
+    std::span<int> array = decodeless::create::array(alloc, ints | transform(running_sum));
+    EXPECT_THAT(array, testing::ElementsAre(0, 1, 3, 6, 10));
 }
 
 TEST(Allocate, Readme) {
