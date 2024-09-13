@@ -27,17 +27,27 @@ if(MSVC)
   target_compile_options(${PROJECT_NAME}_tests PRIVATE /W4 /WX)
   target_compile_definitions(${PROJECT_NAME}_tests PRIVATE WIN32_LEAN_AND_MEAN=1 NOMINMAX)
 else()
-  target_compile_options(${PROJECT_NAME}_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(${PROJECT_NAME}_tests PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+    -ftemplate-backtrace-limit=0
+    # Note: some of these are ABI breaking and are only safe here due to
+    # all dependencies being header-only
+    # https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_macros.html
+    $<$<CONFIG:Debug>:-D_GLIBCXX_ASSERTIONS>
+    $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG>
+    $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG_PEDANTIC>
+    $<$<CONFIG:Debug>:-D_GLIBCXX_CONCEPT_CHECKS>
+    $<$<CONFIG:Debug>:-D_GLIBCXX_SANITIZE_VECTOR>
+    )
+  option(DECODELESS_TESTING_ENABLE_ASAN "Compile decodeless tests with sanitizers" ON)
+  if(DECODELESS_TESTING_ENABLE_ASAN)
     target_compile_options(${PROJECT_NAME}_tests PRIVATE
-      $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG>
-      $<$<CONFIG:Debug>:-D_GLIBCXX_DEBUG_BACKTRACE>)
-    try_compile(HAS_STDCXX_LIBBACKTRACE
-      SOURCE_FROM_CONTENT stdc++_libbacktrace_test.cpp "int main() { return 0; }"
-      LINK_LIBRARIES stdc++_libbacktrace)
-    if(HAS_STDCXX_LIBBACKTRACE)
-      target_link_libraries(${PROJECT_NAME}_tests $<$<CONFIG:Debug>:stdc++_libbacktrace>)
-    endif()
+      $<$<CONFIG:Debug>:-fsanitize=address,undefined,leak>)
+    target_link_options(${PROJECT_NAME}_tests PRIVATE
+      $<$<CONFIG:Debug>:-fsanitize=address,undefined,leak>)
   endif()
 endif()
 
