@@ -4,9 +4,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(decodeless_allocator)
 
-set(CMAKE_CXX_STANDARD 20)
-
 add_library(decodeless_allocator INTERFACE)
+target_compile_features(decodeless_allocator INTERFACE cxx_std_20)
 target_include_directories(decodeless_allocator INTERFACE include)
 
 # cmake namespace style alias
