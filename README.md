@@ -1,8 +1,8 @@
 # decodeless_allocator
 
-[`decodeless`](https://github.com/decodeless) (previously no-decode) is a
-collection of utility libraries for conveniently reading and writing files via
-memory mapping. Components can be used individually or combined.
+[`decodeless`](https://github.com/decodeless) is a collection of utility
+libraries for conveniently reading and writing files via memory mapping.
+Components can be used individually or combined.
 
 `decodeless_allocator` is a possibly-growable local linear arena allocator.
 - growable: The backing allocation may grow if it has reallocate() and the
@@ -15,6 +15,7 @@ memory mapping. Components can be used individually or combined.
   std::bad_alloc is thrown (unless a reallocate() is possible).
 - STL compatible, although this probably isn't useful as it's a linear
   allocator.
+- Remote allocator compatible, to allocate for another virtual address space.
 
 But why? I want to write C++ structures to a file and read them back without
 decoding or deserializing byte by byte because that's slow. If I read it back
@@ -42,6 +43,23 @@ header. Note that decodeless_allocator requires trivially destructible types but
 This library includes utility functions `decodeless::create::object()` and
 `decodeless::create::array()` to construct objects from an allocator or memory
 resource.
+
+The linear allocator can be backed by a *remote* parent allocator, e.g.
+allocating memory for another virtual address space such as video memory. It
+does not read/write to the memory it allocates from. Note that
+`decodelsss::linear_memory_resource` can handle `nullptr` while it is UB for
+`decodelsss::pmr_linear_memory_resource`, which implements
+`std::pmr::memory_resource`, to receive `nullptr` as an allocation address. "Why
+would anyone want that?" I hear you screaming. It can be handy for two pass
+allocation where you are initially just interested in a total size and actually
+start with a zero base.
+
+`std::pmr::monotonic_buffer_resource` is quite similar to
+`decodelsss::pmr_linear_memory_resource`. The primary difference is
+`decodelsss::pmr_linear_memory_resource` support growing via its reallocating
+interface. Secondly, it's a template and the backing resource can be inlined
+into the object, so there is less indirection and more compiler optimization.
+This applies to `decodelsss::linear_memory_resource` too.
 
 ## Example
 

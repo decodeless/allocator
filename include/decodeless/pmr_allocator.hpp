@@ -33,16 +33,23 @@ template <memory_resource_or_allocator ParentAllocator = std::allocator<std::byt
 class pmr_linear_memory_resource
     : public memory_resource_adapter<linear_memory_resource<ParentAllocator>> {
 public:
-    static constexpr size_t INITIAL_SIZE = linear_memory_resource<ParentAllocator>::INITIAL_SIZE;
-    pmr_linear_memory_resource(size_t                 initialSize = INITIAL_SIZE,
+    using base_type = memory_resource_adapter<linear_memory_resource<ParentAllocator>>;
+    pmr_linear_memory_resource(size_t                 initialSize,
                                const ParentAllocator& parentAllocator = ParentAllocator())
         requires allocator<ParentAllocator>
-        : memory_resource_adapter<linear_memory_resource<ParentAllocator>>(initialSize,
-                                                                           parentAllocator) {}
+        : base_type(initialSize, parentAllocator) {}
     pmr_linear_memory_resource(size_t initialSize, ParentAllocator&& parentAllocator)
         requires memory_resource<ParentAllocator>
-        : memory_resource_adapter<linear_memory_resource<ParentAllocator>>(
-              initialSize, std::move(parentAllocator)) {}
+        : base_type(initialSize, std::move(parentAllocator)) {}
+    pmr_linear_memory_resource()
+        requires realloc_allocator<ParentAllocator>
+    = default;
+    pmr_linear_memory_resource(const ParentAllocator& parent)
+        requires realloc_allocator<ParentAllocator>
+        : base_type(parent) {}
+    pmr_linear_memory_resource(ParentAllocator&& parent)
+        requires realloc_memory_resource<ParentAllocator>
+        : base_type(std::move(parent)) {}
     void   reset() { this->backing_resource().reset(); }
     void   truncate() { this->backing_resource().truncate(); }
     void*  data() const { return this->backing_resource().data(); }
