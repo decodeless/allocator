@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Pyarelal Knowles, MIT License
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -15,50 +16,135 @@
 
 using namespace decodeless;
 
-struct NullAllocator {
+template <std::byte* ptr = nullptr>
+struct ConstAllocator {
     using value_type = std::byte;
-    value_type* allocate(std::size_t n) {
+    static value_type* allocate(std::size_t n) {
+        EXPECT_GT(n, 0);
         EXPECT_FALSE(allocated);
         allocated = true;
-        (void)n;
-        return nullptr;
+        return ptr;
     }
-    void deallocate(value_type* p, std::size_t n) noexcept {
+    static void deallocate(value_type* p, std::size_t n) noexcept {
+        EXPECT_EQ(p, ptr);
+        EXPECT_GT(n, 0);
         EXPECT_TRUE(allocated);
-        (void)p;
-        (void)n;
+        allocated = false;
     }
-    bool allocated = false;
+    static bool allocated;
 };
 
-struct ReallocNullAllocator {
+template <std::byte* ptr>
+bool ConstAllocator<ptr>::allocated = false;
+
+using NullAllocator = ConstAllocator<nullptr>;
+
+template <std::byte* ptr = nullptr>
+struct ReallocConstAllocator {
     using value_type = std::byte;
-    value_type* allocate(std::size_t n) {
+    static value_type* allocate(std::size_t n) {
         EXPECT_EQ(size, 0);
+        EXPECT_GT(n, 0);
         size = n;
-        return nullptr;
+        return ptr;
     }
-    value_type* reallocate(value_type* p, std::size_t n) noexcept {
-        EXPECT_EQ(p, nullptr);
-        EXPECT_GT(size, 0);
+    static value_type* reallocate(value_type* p, std::size_t n) noexcept {
+        EXPECT_EQ(p, ptr);
+        EXPECT_GT(n, 0);
         size = n;
-        return nullptr;
+        return ptr;
     }
-    void deallocate(value_type* p, std::size_t n) noexcept {
+    static void deallocate(value_type* p, std::size_t n) noexcept {
+        EXPECT_EQ(p, ptr);
         EXPECT_GT(size, 0);
-        (void)p;
-        (void)n;
+        EXPECT_GT(n, 0);
+        size = 0;
     }
-    size_t size = 0;
+    static size_t size;
+};
+
+template <std::byte* ptr>
+size_t ReallocConstAllocator<ptr>::size = 0;
+
+using ReallocNullAllocator = ReallocConstAllocator<nullptr>;
+
+struct Allocate : testing::Test {
+    virtual void TearDown() {
+        // Check for leaks
+        EXPECT_FALSE(NullAllocator::allocated);
+        EXPECT_EQ(ReallocNullAllocator::size, 0);
+    }
 };
 
 static_assert(realloc_allocator<ReallocNullAllocator>);
 
-struct ReallocNullMemoryResource {
-    void* allocate(std::size_t, std::size_t) { return nullptr; }
-    void* reallocate(void*, std::size_t, std::size_t) noexcept { return nullptr; }
-    void  deallocate(void*, std::size_t) noexcept {}
+template <std::byte* ptr = nullptr>
+struct ConstMemoryResource {
+    void* allocate(std::size_t n, std::size_t) {
+        EXPECT_GT(n, 0);
+        EXPECT_FALSE(allocated);
+        allocated = true;
+        return ptr;
+    }
+    void deallocate(void* p, std::size_t n) noexcept {
+        EXPECT_EQ(p, ptr);
+        EXPECT_GT(n, 0);
+        EXPECT_TRUE(allocated);
+        allocated = false;
+    }
+    ConstMemoryResource() = default;
+    ConstMemoryResource(const ConstMemoryResource& other) = delete;
+    ConstMemoryResource(ConstMemoryResource&& other) noexcept
+        : allocated(other.allocated) {
+        other.allocated = false;
+    }
+    ConstMemoryResource& operator=(const ConstMemoryResource& other) = delete;
+    ConstMemoryResource& operator=(ConstMemoryResource&& other) noexcept {
+        std::swap(allocated = false, other.allocated);
+        return *this;
+    }
+    ~ConstMemoryResource() { EXPECT_FALSE(allocated); }
+    bool allocated = false;
 };
+
+using NullMemoryResource = ConstMemoryResource<nullptr>;
+
+template <std::byte* ptr = nullptr>
+struct ReallocConstMemoryResource {
+    void* allocate(std::size_t n, std::size_t) {
+        EXPECT_GT(n, 0);
+        EXPECT_EQ(size, 0);
+        size = n;
+        return ptr;
+    }
+    void* reallocate(void* p, std::size_t n, std::size_t) noexcept {
+        EXPECT_EQ(p, ptr);
+        EXPECT_GT(n, 0);
+        size = n;
+        return ptr;
+    }
+    void deallocate(void* p, std::size_t n) noexcept {
+        EXPECT_GT(size, 0);
+        EXPECT_EQ(p, ptr);
+        EXPECT_GT(n, 0);
+        size = 0;
+    }
+    ReallocConstMemoryResource() = default;
+    ReallocConstMemoryResource(const ReallocConstMemoryResource& other) = delete;
+    ReallocConstMemoryResource(ReallocConstMemoryResource&& other) noexcept
+        : size(other.size) {
+        other.size = 0;
+    }
+    ReallocConstMemoryResource& operator=(const ReallocConstMemoryResource& other) = delete;
+    ReallocConstMemoryResource& operator=(ReallocConstMemoryResource&& other) noexcept {
+        std::swap(size = 0, other.size);
+        return *this;
+    }
+    ~ReallocConstMemoryResource() { EXPECT_EQ(size, 0); }
+    size_t size = 0;
+};
+
+using ReallocNullMemoryResource = ReallocConstMemoryResource<nullptr>;
 
 static_assert(realloc_memory_resource<ReallocNullMemoryResource>);
 static_assert(realloc_allocator<memory_resource_ref<std::byte, ReallocNullMemoryResource>>,
@@ -67,8 +153,12 @@ static_assert(!realloc_allocator<linear_allocator<std::byte, std::allocator<std:
               "std::allocator does not reallocate");
 static_assert(!realloc_memory_resource<linear_memory_resource<ReallocNullAllocator>>,
               "linear memory does not reallocate, only its parent");
+static_assert(!std::default_initializable<linear_memory_resource<NullAllocator>>);
+static_assert(!std::default_initializable<linear_memory_resource<NullMemoryResource>>);
+static_assert(std::default_initializable<linear_memory_resource<ReallocNullAllocator>>);
+static_assert(!std::default_initializable<linear_memory_resource<ReallocNullMemoryResource>>);
 
-TEST(Allocate, Object) {
+TEST_F(Allocate, Object) {
     linear_memory_resource<NullAllocator> memory(23);
 
     // byte can be placed anywhere
@@ -91,7 +181,7 @@ TEST(Allocate, Object) {
     EXPECT_THROW((void)memory.allocate(sizeof(int), alignof(int)), std::bad_alloc);
 }
 
-TEST(Allocate, Array) {
+TEST_F(Allocate, Array) {
     linear_memory_resource<NullAllocator> memory(32);
 
     // byte can be placed anywhere
@@ -107,7 +197,59 @@ TEST(Allocate, Array) {
     EXPECT_EQ(memory.size(), 32);
 }
 
-TEST(Allocate, Initialize) {
+TEST_F(Allocate, EmptyNonrealloc) {
+    linear_memory_resource<NullAllocator> memory(42);
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 42);
+}
+
+TEST_F(Allocate, EmptyRealloc) {
+    linear_memory_resource<ReallocNullAllocator> memory;
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+}
+
+TEST_F(Allocate, Truncate) {
+    linear_memory_resource<ReallocNullAllocator> memory;
+    std::ignore = memory.allocate(1, 1);
+    EXPECT_EQ(memory.size(), 1);
+    EXPECT_GE(memory.capacity(), 1);
+    EXPECT_EQ(memory.parent().size, memory.capacity());
+    memory.truncate();
+    EXPECT_EQ(memory.size(), 1);
+    EXPECT_EQ(memory.capacity(), memory.size()); // capacity must be reduced to the size
+    EXPECT_EQ(memory.parent().size, memory.capacity());
+}
+
+TEST_F(Allocate, TruncateEmpty) {
+    linear_memory_resource<ReallocNullAllocator> memory;
+    EXPECT_EQ(memory.parent().size, 0);
+    memory.truncate();
+    EXPECT_EQ(memory.parent().size, 0);
+}
+
+TEST_F(Allocate, TruncateReset) {
+    linear_memory_resource<ReallocNullAllocator> memory;
+    std::ignore = memory.allocate(1, 1);
+    EXPECT_EQ(memory.size(), 1);
+    EXPECT_EQ(memory.capacity(), 1);
+    memory.reset();
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 1);
+    memory.truncate();
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    EXPECT_EQ(memory.parent().size, memory.capacity());
+}
+
+TEST_F(Allocate, EmptyAllocate) {
+    linear_memory_resource<ReallocNullAllocator> memory;
+    EXPECT_EQ(memory.parent().size, 0);
+    std::ignore = memory.allocate(1, 1);
+    EXPECT_EQ(memory.parent().size, 1);
+}
+
+TEST_F(Allocate, Initialize) {
     linear_memory_resource memory(1024);
     std::span<uint8_t>     raw = create::array<uint8_t>(memory, 1024);
     std::ranges::fill(raw, 0xeeu);
@@ -135,7 +277,7 @@ TEST(Allocate, Initialize) {
     EXPECT_EQ(span3[2], 5);
 }
 
-TEST(Allocate, Realloc) {
+TEST_F(Allocate, Realloc) {
     linear_memory_resource<ReallocNullAllocator> alloc(4);
     EXPECT_EQ(alloc.parent().size, 4);
     (void)alloc.allocate(sizeof(int), alignof(int));
@@ -156,15 +298,21 @@ TEST(Allocate, Realloc) {
     EXPECT_EQ(alloc.parent().size, 1003 * sizeof(int));
 }
 
-TEST(Allocate, Equality) {
-    linear_memory_resource<NullAllocator>             r0(4);
-    linear_memory_resource<NullAllocator>             r1(4);
+struct EqualityTestAlloc {
+    using value_type = std::byte;
+    static value_type* allocate(std::size_t) { return nullptr; }
+    static void        deallocate(value_type*, std::size_t) noexcept {}
+};
+
+TEST_F(Allocate, Equality) {
+    linear_memory_resource<EqualityTestAlloc>         r0(4);
+    linear_memory_resource<EqualityTestAlloc>         r1(4);
     linear_memory_resource<std::allocator<std::byte>> r2(4);
-    linear_allocator<int, NullAllocator>              a0(r0);
-    linear_allocator<int, NullAllocator>              a1(r1);
+    linear_allocator<int, EqualityTestAlloc>          a0(r0);
+    linear_allocator<int, EqualityTestAlloc>          a1(r1);
     linear_allocator<int, std::allocator<std::byte>>  a2(r2);
-    linear_allocator<int, NullAllocator>              c0(a0);
-    linear_allocator<int, NullAllocator>              c1(a1);
+    linear_allocator<int, EqualityTestAlloc>          c0(a0);
+    linear_allocator<int, EqualityTestAlloc>          c1(a1);
     linear_allocator<int, std::allocator<std::byte>>  c2(a2);
     EXPECT_EQ(a0, c0);
     EXPECT_EQ(a1, c1);
@@ -174,7 +322,7 @@ TEST(Allocate, Equality) {
 }
 
 // Relaxed test case for MSVC where the debug vector allocates extra crap
-TEST(Allocate, VectorRelaxed) {
+TEST_F(Allocate, VectorRelaxed) {
     linear_memory_resource alloc(100);
     EXPECT_EQ(alloc.size(), 0);
     EXPECT_EQ(alloc.capacity(), 100);
@@ -186,7 +334,7 @@ TEST(Allocate, VectorRelaxed) {
     EXPECT_THROW(vec.reserve(100), std::bad_alloc);
 }
 
-TEST(Allocate, Vector) {
+TEST_F(Allocate, Vector) {
     bool debug =
 #if defined(NDEBUG)
         false;
@@ -216,7 +364,7 @@ TEST(Allocate, Vector) {
     EXPECT_THROW(vec.reserve(21), std::bad_alloc);
 }
 
-TEST(Allocate, PmrAllocator) {
+TEST_F(Allocate, PmrAllocator) {
     pmr_linear_memory_resource<std::allocator<std::byte>> res(100);
     EXPECT_EQ(res.size(), 0);
     EXPECT_EQ(res.capacity(), 100);
@@ -226,7 +374,7 @@ TEST(Allocate, PmrAllocator) {
     EXPECT_EQ(res.size(), 10);
 }
 
-TEST(Allocate, PmrVectorRelaxed) {
+TEST_F(Allocate, PmrVectorRelaxed) {
     pmr_linear_memory_resource<std::allocator<std::byte>> res(100);
     EXPECT_EQ(res.size(), 0);
     EXPECT_EQ(res.capacity(), 100);
@@ -238,7 +386,7 @@ TEST(Allocate, PmrVectorRelaxed) {
     EXPECT_THROW(vec.reserve(100), std::bad_alloc);
 }
 
-TEST(Allocate, ArrayFromView) {
+TEST_F(Allocate, ArrayFromView) {
     using namespace std::views;
     auto                   running_sum = [l = 0](int i) mutable { return std::exchange(l, l + i); };
     std::vector            ints{1, 2, 3, 4, 5};
@@ -247,7 +395,7 @@ TEST(Allocate, ArrayFromView) {
     EXPECT_THAT(array, testing::ElementsAre(0, 1, 3, 6, 10));
 }
 
-TEST(Allocate, Readme) {
+TEST_F(Allocate, Readme) {
     // could also be decodeless::mapped_file_allocator<std::byte> from
     // decodeless_writer
     using parent_allocator = std::allocator<std::byte>;
@@ -269,7 +417,7 @@ TEST(Allocate, Readme) {
     EXPECT_EQ(res.size(), 10);
 }
 
-TEST(Allocate, References) {
+TEST_F(Allocate, References) {
     linear_memory_resource            res(100);
     auto&                             res_r(res);
     linear_allocator<std::byte>       alloc(res);
@@ -297,7 +445,7 @@ TEST(Allocate, References) {
 
 // Test allocation of zero bytes to ensure it handles no-operation requests
 // correctly
-TEST(Allocate, ZeroBytes) {
+TEST_F(Allocate, ZeroBytes) {
     linear_memory_resource<NullAllocator> memory(23);
     EXPECT_EQ(memory.allocate(0, 1), nullptr);
     EXPECT_EQ(memory.size(), 0);
@@ -305,7 +453,7 @@ TEST(Allocate, ZeroBytes) {
 
 // Test allocation that exactly matches the remaining capacity to verify
 // boundary conditions
-TEST(Allocate, ExactCapacity) {
+TEST_F(Allocate, ExactCapacity) {
     linear_memory_resource<NullAllocator> memory(23);
     EXPECT_EQ(memory.allocate(23, 1), reinterpret_cast<void*>(0));
     EXPECT_EQ(memory.size(), 23);
@@ -313,7 +461,7 @@ TEST(Allocate, ExactCapacity) {
 
 // Test repeated allocations that gradually use up the memory to ensure
 // consistent behavior as memory fills
-TEST(Allocate, RepeatedAllocations) {
+TEST_F(Allocate, RepeatedAllocations) {
     linear_memory_resource<NullAllocator> memory(23);
     for (size_t i = 0; i < 23; i++) {
         EXPECT_EQ(memory.allocate(1, 1), reinterpret_cast<void*>(i));
@@ -323,28 +471,28 @@ TEST(Allocate, RepeatedAllocations) {
 
 // Verify behavior when attempting to allocate more memory than available,
 // beyond just expecting std::bad_alloc
-TEST(Allocate, OutOfMemory) {
+TEST_F(Allocate, OutOfMemory) {
     linear_memory_resource<NullAllocator> memory(23);
     EXPECT_THROW((void)memory.allocate(24, 1), std::bad_alloc);
     EXPECT_EQ(memory.size(), 0);
 }
 
 // Test the allocator's response to unusual or extreme alignment requirements
-TEST(Allocate, UnusualAlignment) {
+TEST_F(Allocate, UnusualAlignment) {
     linear_memory_resource<NullAllocator> memory(23);
     EXPECT_EQ(memory.allocate(sizeof(int), 16), reinterpret_cast<void*>(0));
     EXPECT_EQ(memory.size(), sizeof(int));
 }
 
 // Test allocation of a large object to verify handling of large allocations
-TEST(Allocate, LargeAllocation) {
+TEST_F(Allocate, LargeAllocation) {
     linear_memory_resource<NullAllocator> memory(200'000'000);
     EXPECT_EQ(memory.allocate(123'456'789, 1), reinterpret_cast<void*>(0));
     EXPECT_EQ(memory.size(), 123'456'789);
 }
 
 // More detailed tests focusing on alignment
-TEST(Allocate, Alignment) {
+TEST_F(Allocate, Alignment) {
     linear_memory_resource<NullAllocator> memory(1024);
 
     // Test alignment for different types
@@ -394,6 +542,194 @@ TEST(Allocate, Alignment) {
     EXPECT_EQ(memory.allocate(sizeof(AlignedStruct), alignof(AlignedStruct)),
               reinterpret_cast<void*>(64));
     EXPECT_EQ(memory.size(), 64 + sizeof(AlignedStruct));
+}
+
+TEST_F(Allocate, MemoryResource) {
+    linear_memory_resource<NullMemoryResource> memory{4, NullMemoryResource()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 4);
+    std::ignore = memory.allocate(4, 4);
+    EXPECT_THROW(std::ignore = memory.allocate(4, 4), std::bad_alloc);
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+}
+
+TEST_F(Allocate, ReallocMemoryResource) {
+    linear_memory_resource<ReallocNullMemoryResource> memory{ReallocNullMemoryResource()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    std::ignore = memory.allocate(4, 4);
+    std::ignore = memory.allocate(4, 4);
+    EXPECT_EQ(memory.size(), 8);
+    EXPECT_EQ(memory.capacity(), 8);
+}
+
+TEST_F(Allocate, AllocatorBackedMove) {
+    linear_memory_resource<NullAllocator> memory(8);
+    auto                                  a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    linear_memory_resource<NullAllocator> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+TEST_F(Allocate, MemoryResourceBackedMove) {
+    linear_memory_resource<NullMemoryResource> memory(8, NullMemoryResource());
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    linear_memory_resource<NullMemoryResource> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+TEST_F(Allocate, ReallocAllocatorBackedMove) {
+    linear_memory_resource<ReallocNullAllocator> memory(8);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    linear_memory_resource<ReallocNullAllocator> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+TEST_F(Allocate, ReallocMemoryResourceBackedMove) {
+    linear_memory_resource<ReallocNullMemoryResource> memory(8, ReallocNullMemoryResource());
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    linear_memory_resource<ReallocNullMemoryResource> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+std::byte g_mem;
+
+TEST_F(Allocate, AllocatorBackedPmrMove) {
+    pmr_linear_memory_resource<ConstAllocator<&g_mem>> memory(12);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    pmr_linear_memory_resource<ConstAllocator<&g_mem>> moved_constructed_memory(std::move(memory));
+    auto b = reinterpret_cast<uintptr_t>(moved_constructed_memory.allocate(4, 4));
+    ConstAllocator<&g_mem>::allocated =
+        false; // workaround for test not actually supporting multiple allocations
+    pmr_linear_memory_resource<ConstAllocator<&g_mem>> moved_assigned_memory(1);
+    moved_assigned_memory = std::move(moved_constructed_memory);
+    ConstAllocator<&g_mem>::allocated =
+        true; // workaround for test not actually supporting multiple allocations
+    auto c = reinterpret_cast<uintptr_t>(moved_assigned_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+    EXPECT_EQ(a + 8, c);
+    EXPECT_EQ(moved_assigned_memory.size(), 12);
+}
+
+TEST_F(Allocate, MemoryResourceBackedPmrMove) {
+    pmr_linear_memory_resource<ConstMemoryResource<&g_mem>> memory(12,
+                                                                   ConstMemoryResource<&g_mem>());
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    pmr_linear_memory_resource<ConstMemoryResource<&g_mem>> moved_constructed_memory(
+        std::move(memory));
+    auto b = reinterpret_cast<uintptr_t>(moved_constructed_memory.allocate(4, 4));
+    pmr_linear_memory_resource<ConstMemoryResource<&g_mem>> moved_assigned_memory(
+        1, ConstMemoryResource<&g_mem>());
+    moved_assigned_memory = std::move(moved_constructed_memory);
+    auto c = reinterpret_cast<uintptr_t>(moved_assigned_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+    EXPECT_EQ(a + 8, c);
+    EXPECT_EQ(moved_assigned_memory.size(), 12);
+}
+
+TEST_F(Allocate, ReallocAllocatorBackedPmrMove) {
+    pmr_linear_memory_resource<ReallocConstAllocator<&g_mem>> memory(8);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    pmr_linear_memory_resource<ReallocConstAllocator<&g_mem>> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+TEST_F(Allocate, ReallocMemoryResourceBackedPmrMove) {
+    pmr_linear_memory_resource<ReallocConstMemoryResource<&g_mem>> memory{
+        8, ReallocConstMemoryResource<&g_mem>()};
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    pmr_linear_memory_resource<ReallocConstMemoryResource<&g_mem>> moved_memory = std::move(memory);
+    auto b = reinterpret_cast<uintptr_t>(moved_memory.allocate(4, 4));
+    EXPECT_EQ(a + 4, b);
+}
+
+TEST_F(Allocate, ConstructReallocAllocatorDefault) {
+    linear_memory_resource<ReallocConstAllocator<&g_mem>> memory;
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructReallocAllocator) {
+    linear_memory_resource<ReallocConstAllocator<&g_mem>> memory{ReallocConstAllocator<&g_mem>()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructReallocMemoryResource) {
+    linear_memory_resource<ReallocConstMemoryResource<&g_mem>> memory{
+        ReallocConstMemoryResource<&g_mem>()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructAllocatorPmr) {
+    pmr_linear_memory_resource<ConstAllocator<&g_mem>> memory(4, ConstAllocator<&g_mem>());
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 4);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructMemoryResourcePmr) {
+    pmr_linear_memory_resource<ConstMemoryResource<&g_mem>> memory(4,
+                                                                   ConstMemoryResource<&g_mem>());
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 4);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructReallocAllocatorDefaultPmr) {
+    pmr_linear_memory_resource<ReallocConstAllocator<&g_mem>> memory;
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructReallocAllocatorPmr) {
+    pmr_linear_memory_resource<ReallocConstAllocator<&g_mem>> memory{
+        ReallocConstAllocator<&g_mem>()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
+}
+
+TEST_F(Allocate, ConstructReallocMemoryResourcePmr) {
+    pmr_linear_memory_resource<ReallocConstMemoryResource<&g_mem>> memory{
+        ReallocConstMemoryResource<&g_mem>()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+    auto a = reinterpret_cast<uintptr_t>(memory.allocate(4, 4));
+    EXPECT_EQ(memory.size(), 4);
+    EXPECT_EQ(memory.capacity(), 4);
+    EXPECT_EQ(a, reinterpret_cast<uintptr_t>(&g_mem));
 }
 
 struct int2 {
