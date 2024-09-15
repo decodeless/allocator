@@ -79,7 +79,7 @@ public:
     linear_memory_resource(size_t initialSize, ResOrAlloc&& parent)
         requires memory_resource<ResOrAlloc>
         : m_parent(std::move(parent))
-        , m_begin(allocate_bytes(m_parent, initialSize))
+        , m_begin(initialSize != 0 ? allocate_bytes(m_parent, initialSize) : nullptr)
         , m_next(reinterpret_cast<uintptr_t>(m_begin))
         , m_end(reinterpret_cast<uintptr_t>(m_begin) + initialSize) {
         if constexpr (nonrealloc_memory_resource<ResOrAlloc>) {
