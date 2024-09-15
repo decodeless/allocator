@@ -203,8 +203,26 @@ TEST_F(Allocate, EmptyNonrealloc) {
     EXPECT_EQ(memory.capacity(), 42);
 }
 
-TEST_F(Allocate, EmptyRealloc) {
+TEST_F(Allocate, EmptyReallocDefault) {
     linear_memory_resource<ReallocNullAllocator> memory;
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+}
+
+TEST_F(Allocate, EmptyRealloc) {
+    linear_memory_resource<ReallocNullMemoryResource> memory{ReallocNullMemoryResource()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+}
+
+TEST_F(Allocate, ZeroInitialRealloc) {
+    linear_memory_resource<ReallocNullAllocator> memory{0, ReallocNullAllocator()};
+    EXPECT_EQ(memory.size(), 0);
+    EXPECT_EQ(memory.capacity(), 0);
+}
+
+TEST_F(Allocate, ZeroInitialReallocMemoryResource) {
+    linear_memory_resource<ReallocNullMemoryResource> memory{0, ReallocNullMemoryResource()};
     EXPECT_EQ(memory.size(), 0);
     EXPECT_EQ(memory.capacity(), 0);
 }
