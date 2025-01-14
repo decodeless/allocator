@@ -55,6 +55,11 @@ public:
     using parent_allocator = ResOrAlloc;
 
     // Non-reallocating parent allocator constructor must take an initial size
+#if _MSC_VER < 1930
+    // MSVC 2019 doesn't allow a trailing requires clause on a function of a
+    // templated class. Adding a dummy template like this avoids error C7599.
+    template<class U = ResOrAlloc>
+#endif
     linear_memory_resource(size_t initialSize, const ResOrAlloc& parent = ResOrAlloc())
         requires allocator<ResOrAlloc>
         : m_parent(parent)
@@ -68,6 +73,9 @@ public:
 
     // Non-reallocating parent memory_resource constructor must take an initial
     // size
+#if _MSC_VER < 1930
+    template<class U = ResOrAlloc>
+#endif
     linear_memory_resource(size_t initialSize, ResOrAlloc&& parent)
         requires memory_resource<ResOrAlloc>
         : m_parent(std::move(parent))
@@ -80,17 +88,26 @@ public:
     }
 
     // Reallocating parent allocator may default construct
+#if _MSC_VER < 1930
+    template<class U = ResOrAlloc>
+#endif
     linear_memory_resource()
         requires realloc_allocator<ResOrAlloc>
-    = default;
+        : m_parent() {}
 
     // Reallocating parent allocator can be copied
+#if _MSC_VER < 1930
+    template<class U = ResOrAlloc>
+#endif
     linear_memory_resource(const ResOrAlloc& parent)
         requires realloc_allocator<ResOrAlloc>
         : m_parent(parent) {}
 
     // Reallocating parent memory_resource must be moved into the linear
     // resource
+#if _MSC_VER < 1930
+    template<class U = ResOrAlloc>
+#endif
     linear_memory_resource(ResOrAlloc&& parent)
         requires realloc_memory_resource<ResOrAlloc>
         : m_parent(std::move(parent)) {}
