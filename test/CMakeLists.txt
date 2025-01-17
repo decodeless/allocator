@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Pyarelal Knowles, MIT License
+# Copyright (c) 2024-2025 Pyarelal Knowles, MIT License
 
 cmake_minimum_required(VERSION 3.20)
 
@@ -21,8 +21,6 @@ target_link_libraries(
   gtest_main
   gmock_main)
 
-# TODO: presets?
-# https://stackoverflow.com/questions/45955272/modern-way-to-set-compiler-flags-in-cross-platform-cmake-project
 if(MSVC)
   target_compile_options(${PROJECT_NAME}_tests PRIVATE /W4 /WX)
   target_compile_definitions(${PROJECT_NAME}_tests PRIVATE WIN32_LEAN_AND_MEAN=1 NOMINMAX)
@@ -48,6 +46,20 @@ else()
       $<$<CONFIG:Debug>:-fsanitize=address,undefined,leak>)
     target_link_options(${PROJECT_NAME}_tests PRIVATE
       $<$<CONFIG:Debug>:-fsanitize=address,undefined,leak>)
+  endif()
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Ugly detection for a working _GLIBCXX_DEBUG_BACKTRACE config, but the
+    # feature itself is useful
+    include(glibcxx_debug_backtrace.cmake)
+    if(GLIBCXX_DEBUG_BACKTRACE_SUPPORTED)
+      target_compile_definitions(
+        ${PROJECT_NAME}_tests
+        PRIVATE $<$<CONFIG:Debug>:_GLIBCXX_DEBUG_BACKTRACE>)
+      target_link_libraries(${PROJECT_NAME}_tests
+                            $<$<CONFIG:Debug>:${GLIBCXX_DEBUG_BACKTRACE_LIBRARY}>)
+      target_compile_features(${PROJECT_NAME}_tests
+                              PRIVATE ${GLIBCXX_DEBUG_BACKTRACE_CXX_FEATURE})
+    endif()
   endif()
 endif()
 
