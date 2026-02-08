@@ -133,8 +133,8 @@ public:
     }
 
     [[nodiscard]] constexpr void* allocate(std::size_t bytes, std::size_t align) {
-        // Align
-        uintptr_t result = m_next + ((-static_cast<ptrdiff_t>(m_next)) & (align - 1));
+        // Align, assumes 'align' is a power of two
+        uintptr_t result = (m_next + align - 1) & ~(align - 1);
 
         // Allocate
         uintptr_t newNext = result + bytes;
